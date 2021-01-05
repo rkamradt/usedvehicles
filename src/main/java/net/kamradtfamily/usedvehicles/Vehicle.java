@@ -36,22 +36,32 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class Vehicle {
     public PurchaseOrder po;
+    public String lot;
     @NoArgsConstructor
     public static class Car extends Vehicle {
         public Car(PurchaseOrder po) {
-            super(po);
+            super(po, "");
+        }
+        public Car(PurchaseOrder po, String lot) {
+            super(po, lot);
         }
     }
     @NoArgsConstructor
     public static class Truck extends Vehicle {
         public Truck(PurchaseOrder po) {
-            super(po);
+            super(po, "");
+        }
+        public Truck(PurchaseOrder po, String lot) {
+            super(po, lot);
         }
     }
     @NoArgsConstructor
     public static class Motorcycle extends Vehicle {
         public Motorcycle(PurchaseOrder po) {
-            super(po);
+            super(po, "");
+        }
+        public Motorcycle(PurchaseOrder po, String lot) {
+            super(po, lot);
         }
     }
     

@@ -90,15 +90,17 @@ public class PurchaseOrderConsumer {
         cfactory.setPassword(PASSWORD);
         SenderOptions soptions = new SenderOptions()
                 .connectionFactory(cfactory);
-        Sender sender = RabbitFlux.createSender(soptions);
         ReceiverOptions roptions = new ReceiverOptions()
                 .connectionFactory(cfactory);
+        Sender sender = RabbitFlux.createSender(soptions);
         Receiver receiver = RabbitFlux.createReceiver(roptions);
         sender.sendWithPublishConfirms(receiver
             .consumeAutoAck(PO_QUEUE_NAME)
             .map(d -> readJson(new String(d.getBody())))
             .filter(PurchaseOrder::isValid)
-            .doOnDiscard(PurchaseOrder.class, po -> log("Discarded invalid PO " + po))
+            .doOnNext(po -> log("recevied po " + po))
+            .doOnDiscard(PurchaseOrder.class, 
+                    po -> log("Discarded invalid PO " + po))
             .flatMap(po -> writePoJson(po).map(j -> reactiveCollection
                     .upsert(po.getId(), j)
                     .map(result -> po))
@@ -113,7 +115,11 @@ public class PurchaseOrderConsumer {
             })
             .map(v -> new OutboundMessage("", 
                     outQueue.get(v.getPo().getType()), 
-                    vehicleWriter.get(v.getPo().getType()).apply(v).orElse("").getBytes()))
+                    vehicleWriter
+                            .get(v.getPo().getType())
+                            .apply(v)
+                            .orElse("")
+                            .getBytes()))
         )
         .subscribe();
     }

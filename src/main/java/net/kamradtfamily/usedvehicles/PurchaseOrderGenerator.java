@@ -65,18 +65,19 @@ public class PurchaseOrderGenerator {
         Sender sender = RabbitFlux.createSender(soptions);
         sender.sendWithPublishConfirms(
             Flux.generate((sink) -> sink.next(createRandomPurchaseOrder()))
+                .cast(PurchaseOrder.class)
                 .doOnNext((o) -> log("produced: " + o))
                 .delayElements(Duration.ofMillis(100))
-                .cast(PurchaseOrder.class)
                 .take(Duration.ofSeconds(10))
-                .map(i -> new OutboundMessage("", QUEUE_NAME, writeJson(i).orElse("").getBytes()))
-                .timeout(Duration.ofSeconds(10))
+                .map(i -> new OutboundMessage("", 
+                        QUEUE_NAME, 
+                        writeJson(i).orElse("").getBytes()))
                 .doFinally((s) -> {
                     log("Generator in finally for signal " + s);
                     sender.close();
                 })
         )
-        .subscribe(r -> log("Send response " + r.isAck()));
+        .subscribe();
 
     }
     

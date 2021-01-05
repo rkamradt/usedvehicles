@@ -23,13 +23,6 @@
  */
 package net.kamradtfamily.usedvehicles;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.ObjectWriter;
-import com.couchbase.client.java.Bucket;
-import com.couchbase.client.java.Cluster;
-import com.couchbase.client.java.Collection;
-import com.couchbase.client.java.ReactiveCollection;
-import com.fasterxml.jackson.databind.ObjectReader;
 import com.rabbitmq.client.ConnectionFactory;
 import reactor.rabbitmq.QueueSpecification;
 import reactor.rabbitmq.RabbitFlux;
@@ -50,13 +43,6 @@ public class Main {
     private static final String USER_NAME = "guest";
     private static final String PASSWORD = "guest";
     static final Factory<String, Vehicle, PurchaseOrder> factory = new Factory<>();
-    static final Cluster cluster = Cluster.connect("127.0.0.1", "admin", "admin123");
-    static final Bucket bucket = cluster.bucket("po");
-    static final Collection collection = bucket.defaultCollection();
-    static final ReactiveCollection reactiveCollection = collection.reactive();
-    static final ObjectMapper objectMapper = new ObjectMapper();
-    static final ObjectWriter writer = objectMapper.writerFor(PurchaseOrder.class);
-    static final ObjectReader reader = objectMapper.readerFor(PurchaseOrder.class);
     public static void main(String [] args) throws InterruptedException {
         ConnectionFactory cfactory = new ConnectionFactory();
         cfactory.setHost(HOST_NAME);
@@ -82,8 +68,6 @@ public class Main {
         TruckConsumer.consume();
         MotorcycleConsumer.consume();
         PurchaseOrderGenerator.start();
-        Thread.sleep(10000);
-        
     }
     
 }

@@ -23,6 +23,10 @@
  */
 package net.kamradtfamily.usedvehicles;
 
+import com.couchbase.client.java.Bucket;
+import com.couchbase.client.java.Cluster;
+import com.couchbase.client.java.Collection;
+import com.couchbase.client.java.ReactiveCollection;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
@@ -50,6 +54,10 @@ public class MotorcycleConsumer {
     private static final String PASSWORD = "guest";
     private static final ObjectMapper objectMapper = new ObjectMapper();
     static final ObjectReader motorcycleReader = objectMapper.readerFor(Vehicle.Motorcycle.class);
+    static final Cluster cluster = Cluster.connect("127.0.0.1", "admin", "admin123");
+    static final Bucket bucket = cluster.bucket("po");
+    static final Collection collection = bucket.defaultCollection();
+    static final ReactiveCollection reactiveCollection = collection.reactive();
     
     public static void consume() {
         ConnectionFactory cfactory = new ConnectionFactory();
@@ -74,6 +82,13 @@ public class MotorcycleConsumer {
             })
             .map(j -> readMotorcycleJson(new String(j.getBody())))
             .flatMap(o -> Mono.justOrEmpty(o))
+            .flatMap(v -> reactiveCollection
+                    .get(v.getPo().getId())
+                    .doOnNext(j -> log("po for motorcycle " + v.getPo().getId() + " confirmed"))
+                    .map(j -> v)
+                    .single()
+                    .onErrorReturn(v))
+            .map(c -> new Vehicle.Motorcycle(c.getPo(),"motorcycle lot a"))
             .subscribe(v -> log("received motorcycle " + v));
                 
     }
