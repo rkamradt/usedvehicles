@@ -63,11 +63,11 @@ public class Main {
         try (Sender sender = RabbitFlux.createSender(soptions)) {
             sender.declareQueue(QueueSpecification.queue(MOTORCYCLE_QUEUE_NAME));
         }
-        PurchaseOrderConsumer.consume();
         CarConsumer.consume();
         TruckConsumer.consume();
         MotorcycleConsumer.consume();
         PurchaseOrderGenerator.start();
+        PurchaseOrderConsumer.consume();
     }
     
 }

@@ -34,7 +34,6 @@ import com.rabbitmq.client.ConnectionFactory;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Optional;
-import static net.kamradtfamily.usedvehicles.TruckConsumer.reactiveCollection;
 import reactor.core.publisher.Mono;
 import reactor.rabbitmq.QueueSpecification;
 import reactor.rabbitmq.RabbitFlux;
@@ -74,7 +73,6 @@ public class CarConsumer {
         Receiver carReceiver = RabbitFlux.createReceiver(roptions);
         carReceiver
             .consumeAutoAck(CAR_QUEUE_NAME)
-            .delaySubscription(sender.declareQueue(QueueSpecification.queue(CAR_QUEUE_NAME)))
             .timeout(Duration.ofSeconds(10))
             .doFinally((s) -> {
                 log("Car consumer in finally for signal " + s);

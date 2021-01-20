@@ -73,7 +73,6 @@ public class TruckConsumer {
         Receiver truckReceiver = RabbitFlux.createReceiver(roptions);
         truckReceiver
             .consumeAutoAck(TRUCK_QUEUE_NAME)
-            .delaySubscription(sender.declareQueue(QueueSpecification.queue(TRUCK_QUEUE_NAME)))
             .timeout(Duration.ofSeconds(10))
             .doFinally((s) -> {
                 log("Truck consumer in finally for signal " + s);

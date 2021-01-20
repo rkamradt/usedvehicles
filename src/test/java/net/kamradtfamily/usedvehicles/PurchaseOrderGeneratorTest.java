@@ -36,18 +36,4 @@ public class PurchaseOrderGeneratorTest {
     public PurchaseOrderGeneratorTest() {
     }
     
-    /**
-     * Test of start method, of class PurchaseOrderGenerator.
-     */
-    @Test
-    public void testStart() {
-        System.out.println("start");
-        assertEquals(10, PurchaseOrderGenerator.start()
-                .take(10)
-                .filter(PurchaseOrder::isValid)
-                .doOnNext(po -> System.out.println(po))
-                .count()
-                .block(Duration.ofSeconds(10)));
-    }
-    
 }

@@ -37,8 +37,12 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
+import org.reactivestreams.Publisher;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.GroupedFlux;
 import reactor.core.publisher.Mono;
 import reactor.rabbitmq.OutboundMessage;
+import reactor.rabbitmq.OutboundMessageResult;
 import reactor.rabbitmq.RabbitFlux;
 import reactor.rabbitmq.Receiver;
 import reactor.rabbitmq.ReceiverOptions;
@@ -59,30 +63,15 @@ public class PurchaseOrderConsumer {
     private static final int PORT = 5672;
     private static final String USER_NAME = "guest";
     private static final String PASSWORD = "guest";
-    static final Factory<String, Vehicle, PurchaseOrder> factory = new Factory<>();
-    static final Cluster cluster = Cluster.connect("127.0.0.1", "admin", "admin123");
-    static final Bucket bucket = cluster.bucket("po");
-    static final Collection collection = bucket.defaultCollection();
-    static final ReactiveCollection reactiveCollection = collection.reactive();
-    static final ObjectMapper objectMapper = new ObjectMapper();
-    static final ObjectWriter poWriter = objectMapper.writerFor(PurchaseOrder.class);
-    static final ObjectWriter carWriter = objectMapper.writerFor(Vehicle.Car.class);
-    static final ObjectWriter truckWriter = objectMapper.writerFor(Vehicle.Truck.class);
-    static final ObjectWriter motorcycleWriter = objectMapper.writerFor(Vehicle.Motorcycle.class);
-    static final ObjectReader reader = objectMapper.readerFor(PurchaseOrder.class);
-    static final Map<String, String> outQueue = Map.of(
-            "Car", CAR_QUEUE_NAME,
-            "Truck", TRUCK_QUEUE_NAME,
-            "Motorcycle", MOTORCYCLE_QUEUE_NAME);
-    static final Map<String, Function<Vehicle, Optional<String>>> vehicleWriter = Map.of(
-            "Car", (s) -> writeCarJson((Vehicle.Car)s),
-            "Truck", (s) -> writeTruckJson((Vehicle.Truck)s),
-            "Motorcycle", (s) -> writeMotorcycleJson((Vehicle.Motorcycle)s));
+    private static final Cluster cluster = Cluster.connect("127.0.0.1", "admin", "admin123");
+    private static final Bucket bucket = cluster.bucket("po");
+    private static final Collection collection = bucket.defaultCollection();
+    private static final ReactiveCollection reactiveCollection = collection.reactive();
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+    private static final ObjectWriter poWriter = objectMapper.writerFor(PurchaseOrder.class);
+    private static final ObjectReader reader = objectMapper.readerFor(PurchaseOrder.class);
     
     public static void consume() {
-        factory.add("Car", (po) -> new Vehicle.Car(po));
-        factory.add("Truck", (po) -> new Vehicle.Truck(po));
-        factory.add("Motorcycle", (po) -> new Vehicle.Motorcycle(po));
         ConnectionFactory cfactory = new ConnectionFactory();
         cfactory.setHost(HOST_NAME);
         cfactory.setPort(PORT);
@@ -94,8 +83,20 @@ public class PurchaseOrderConsumer {
                 .connectionFactory(cfactory);
         Sender sender = RabbitFlux.createSender(soptions);
         Receiver receiver = RabbitFlux.createReceiver(roptions);
-        sender.sendWithPublishConfirms(receiver
+        Map<String, Function<GroupedFlux<String, PurchaseOrder>, Publisher<OutboundMessageResult>>> 
+                publisherMap = Map.of(
+            "Car", (o) -> getCarPublisher(sender, o),
+            "Truck", (o) -> getTruckPublisher(sender, o),
+            "Motorcycle", (o) -> getMotorcyclePublisher(sender, o));
+        receiver
             .consumeAutoAck(PO_QUEUE_NAME)
+            .timeout(Duration.ofSeconds(10))
+            .doFinally((s) -> {
+                log("Purchace Order Consumer in finally for signal " + s);
+                receiver.close();
+                sender.close();
+                cluster.disconnect();
+            })
             .map(d -> readJson(new String(d.getBody())))
             .filter(PurchaseOrder::isValid)
             .doOnNext(po -> log("recevied po " + po))
@@ -105,23 +106,9 @@ public class PurchaseOrderConsumer {
                     .upsert(po.getId(), j)
                     .map(result -> po))
                 .orElse(Mono.just(po)))
-            .map(gf -> factory.build(gf.getType(), gf))
-            .timeout(Duration.ofSeconds(10))
-            .doFinally((s) -> {
-                log("Consumer in finally for signal " + s);
-                receiver.close();
-                sender.close();
-                cluster.disconnect();
-            })
-            .map(v -> new OutboundMessage("", 
-                    outQueue.get(v.getPo().getType()), 
-                    vehicleWriter
-                            .get(v.getPo().getType())
-                            .apply(v)
-                            .orElse("")
-                            .getBytes()))
-        )
-        .subscribe();
+            .groupBy(po -> po.getType())
+            .flatMap((v) -> publisherMap.get(v.key()).apply(v))
+            .subscribe();
     }
 
     private static void log(String msg) {
@@ -133,36 +120,6 @@ public class PurchaseOrderConsumer {
             return Optional.of(poWriter.writeValueAsString(po));
         } catch (JsonProcessingException ex) {
             log("unable to serialize po");
-            ex.printStackTrace(System.out);
-            return Optional.empty();
-        }
-    }
-    
-    static Optional<String> writeCarJson(Vehicle.Car car) {
-        try {
-            return Optional.of(carWriter.writeValueAsString(car));
-        } catch (JsonProcessingException ex) {
-            log("unable to serialize car");
-            ex.printStackTrace(System.out);
-            return Optional.empty();
-        }
-    }
-    
-    static Optional<String> writeTruckJson(Vehicle.Truck truck) {
-        try {
-            return Optional.of(truckWriter.writeValueAsString(truck));
-        } catch (JsonProcessingException ex) {
-            log("unable to serialize truck");
-            ex.printStackTrace(System.out);
-            return Optional.empty();
-        }
-    }
-    
-    static Optional<String> writeMotorcycleJson(Vehicle.Motorcycle motorcycle) {
-        try {
-            return Optional.of(motorcycleWriter.writeValueAsString(motorcycle));
-        } catch (JsonProcessingException ex) {
-            log("unable to serialize motorcycle");
             ex.printStackTrace(System.out);
             return Optional.empty();
         }
@@ -181,6 +138,77 @@ public class PurchaseOrderConsumer {
             return PurchaseOrder.builder().build();
         }
     }
+
+    private static Flux<OutboundMessageResult> getCarPublisher(Sender sender, 
+            GroupedFlux<String, PurchaseOrder> input) {
+        log("in get car publisher");
+        return sender.sendWithPublishConfirms(input
+            .map(po -> new Vehicle.Car(po))
+            .doOnNext(car -> log("sending car " + car))
+            .map(v -> {
+                try {
+                    return Optional.of(objectMapper
+                            .writerFor(Vehicle.Car.class)
+                            .writeValueAsString(v));
+                } catch (JsonProcessingException ex) {
+                    return Optional.<String>empty();
+                }
+            })
+            .filter(o -> o.isPresent())
+            .map(o -> o.get())
+            .doOnDiscard(String.class, 
+                    s -> log("Discarded invalid Car"))
+            .map(s -> new OutboundMessage("", 
+                    CAR_QUEUE_NAME, 
+                    s.getBytes())));
+    }
     
+    private static Flux<OutboundMessageResult> getMotorcyclePublisher(Sender sender, 
+            GroupedFlux<String, PurchaseOrder> input) {
+        log("in get motocycle publisher");
+        return sender.sendWithPublishConfirms(input
+            .map(po -> new Vehicle.Motorcycle(po))
+            .doOnNext(motorcycle -> log("sending motorcycle " + motorcycle))
+            .map(v -> {
+                try {
+                    return Optional.of(objectMapper
+                            .writerFor(Vehicle.Motorcycle.class)
+                            .writeValueAsString(v));
+                } catch (JsonProcessingException ex) {
+                    return Optional.<String>empty();
+                }
+            })
+            .filter(o -> o.isPresent())
+            .map(o -> o.get())
+            .doOnDiscard(String.class, 
+                    s -> log("Discarded invalid Motorcycle"))
+            .map(s -> new OutboundMessage("", 
+                    MOTORCYCLE_QUEUE_NAME, 
+                    s.getBytes())));
+    }
+    
+    private static Flux<OutboundMessageResult> getTruckPublisher(Sender sender, 
+            GroupedFlux<String, PurchaseOrder> input) {
+        log("in get truck publisher");
+        return sender.sendWithPublishConfirms(input
+            .map(po -> new Vehicle.Truck(po))
+            .doOnNext(truck -> log("sending truck " + truck))
+            .map(v -> {
+                try {
+                    return Optional.of(objectMapper
+                            .writerFor(Vehicle.Truck.class)
+                            .writeValueAsString(v));
+                } catch (JsonProcessingException ex) {
+                    return Optional.<String>empty();
+                }
+            })
+            .filter(o -> o.isPresent())
+            .map(o -> o.get())
+            .doOnDiscard(String.class, 
+                    s -> log("Discarded invalid Truck"))
+            .map(s -> new OutboundMessage("", 
+                    TRUCK_QUEUE_NAME, 
+                    s.getBytes())));
+    }
     
 }

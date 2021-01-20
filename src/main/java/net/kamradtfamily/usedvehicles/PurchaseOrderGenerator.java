@@ -36,6 +36,7 @@ import java.util.Random;
 import net.kamradtfamily.usedvehicles.PurchaseOrder.PurchaseOrderBuilder;
 import reactor.core.publisher.Flux;
 import reactor.rabbitmq.OutboundMessage;
+import reactor.rabbitmq.QueueSpecification;
 import reactor.rabbitmq.RabbitFlux;
 import reactor.rabbitmq.Sender;
 import reactor.rabbitmq.SenderOptions;
@@ -63,12 +64,13 @@ public class PurchaseOrderGenerator {
         SenderOptions soptions = new SenderOptions()
                 .connectionFactory(cfactory);
         Sender sender = RabbitFlux.createSender(soptions);
+        sender.declareQueue(QueueSpecification.queue(QUEUE_NAME));        
         sender.sendWithPublishConfirms(
             Flux.generate((sink) -> sink.next(createRandomPurchaseOrder()))
                 .cast(PurchaseOrder.class)
-                .doOnNext((o) -> log("produced: " + o))
                 .delayElements(Duration.ofMillis(100))
-                .take(Duration.ofSeconds(10))
+                .take(Duration.ofMillis(1000))
+                .doOnNext((o) -> log("produced: " + o))
                 .map(i -> new OutboundMessage("", 
                         QUEUE_NAME, 
                         writeJson(i).orElse("").getBytes()))
