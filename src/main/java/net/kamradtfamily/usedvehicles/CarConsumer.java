@@ -34,8 +34,9 @@ import com.rabbitmq.client.ConnectionFactory;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Optional;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.rabbitmq.QueueSpecification;
+import reactor.core.scheduler.Schedulers;
 import reactor.rabbitmq.RabbitFlux;
 import reactor.rabbitmq.Receiver;
 import reactor.rabbitmq.ReceiverOptions;
@@ -55,9 +56,14 @@ public class CarConsumer {
     private static final ObjectMapper objectMapper = new ObjectMapper();
     static final ObjectReader carReader = objectMapper.readerFor(Vehicle.Car.class);
     static final Cluster cluster = Cluster.connect("127.0.0.1", "admin", "admin123");
-    static final Bucket bucket = cluster.bucket("po");
-    static final Collection collection = bucket.defaultCollection();
-    static final ReactiveCollection reactiveCollection = collection.reactive();
+    static final ReactiveCollection poReactiveCollection = 
+            cluster.bucket("po")
+            .defaultCollection()
+            .reactive();
+    static final ReactiveCollection carReactiveCollection = 
+            cluster.bucket("car")
+            .defaultCollection()
+            .reactive();
     
     public static void consume() {
         ConnectionFactory cfactory = new ConnectionFactory();
@@ -81,15 +87,39 @@ public class CarConsumer {
             })
             .map(j -> readCarJson(new String(j.getBody())))
             .flatMap(o -> Mono.justOrEmpty(o))
-            .flatMap(v -> reactiveCollection
-                    .get(v.getPo().getId())
-                    .doOnNext(j -> log("po for car " + v.getPo().getId() + " confirmed"))
-                    .map(j -> v)
-                    .single()
-                    .onErrorReturn(v))
             .map(c -> new Vehicle.Car(c.getPo(),"car lot a"))
+            .flatMap(v -> Flux.combineLatest((r) -> r[0], verifyCar(v), writeCar(v), wasteTime(v)))   
             .subscribe(c -> log("received car " + c));
         
+    }
+    
+    private static Mono<Vehicle.Car> wasteTime(Vehicle.Car car) {
+        return Mono.fromCallable(() -> { 
+            Thread.sleep(50);
+            return car;
+        })
+        .subscribeOn(Schedulers.boundedElastic())
+        .doOnNext(c -> log("wasting time on car " + c));
+    }
+    
+    private static Mono<Vehicle.Car> verifyCar(Vehicle.Car car) {
+        return poReactiveCollection
+                    .get(car.getPo().getId())
+                    .doOnNext(c -> log("po for car " + car + " confirmed"))
+                    .doOnError((t) -> log("error verifying car"))
+                    .map(j -> car)
+                    .single()
+                    .onErrorReturn(car);
+    }
+    
+    private static Mono<Vehicle.Car> writeCar(Vehicle.Car car) {
+        return carReactiveCollection
+                .upsert(car.getPo().getId(), car)
+                .doOnNext(c -> log("inserted car " + car + " into car database"))
+                .doOnError((t) -> log("error inserting car"))
+                .map(j -> car)
+                .single()
+                .onErrorReturn(car);
     }
     
     private static void log(String msg) {
