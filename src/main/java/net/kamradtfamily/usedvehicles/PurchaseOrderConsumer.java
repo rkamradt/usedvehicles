@@ -48,6 +48,8 @@ import reactor.rabbitmq.Receiver;
 import reactor.rabbitmq.ReceiverOptions;
 import reactor.rabbitmq.Sender;
 import reactor.rabbitmq.SenderOptions;
+import reactor.util.function.Tuple2;
+import reactor.util.function.Tuples;
 
 /**
  *
@@ -68,8 +70,8 @@ public class PurchaseOrderConsumer {
     private static final Collection collection = bucket.defaultCollection();
     private static final ReactiveCollection reactiveCollection = collection.reactive();
     private static final ObjectMapper objectMapper = new ObjectMapper();
-    private static final ObjectWriter poWriter = objectMapper.writerFor(PurchaseOrder.class);
-    private static final ObjectReader reader = objectMapper.readerFor(PurchaseOrder.class);
+    private static final ObjectWriter poWriter = objectMapper.writerFor(Payload.class);
+    private static final ObjectReader reader = objectMapper.readerFor(Payload.class);
     
     public static void consume() {
         ConnectionFactory cfactory = new ConnectionFactory();
@@ -83,7 +85,8 @@ public class PurchaseOrderConsumer {
                 .connectionFactory(cfactory);
         Sender sender = RabbitFlux.createSender(soptions);
         Receiver receiver = RabbitFlux.createReceiver(roptions);
-        Map<String, Function<GroupedFlux<String, PurchaseOrder>, Publisher<OutboundMessageResult>>> 
+        Map<String, Function<GroupedFlux<String, Tuple2<ContextLogging, PurchaseOrder>>, 
+                Publisher<OutboundMessageResult>>> 
                 publisherMap = Map.of(
             "Car", (o) -> getCarPublisher(sender, o),
             "Truck", (o) -> getTruckPublisher(sender, o),
@@ -92,64 +95,93 @@ public class PurchaseOrderConsumer {
             .consumeAutoAck(PO_QUEUE_NAME)
             .timeout(Duration.ofSeconds(10))
             .doFinally((s) -> {
-                log("Purchace Order Consumer in finally for signal " + s);
+                ContextLogging.log("Purchace Order Consumer in finally for signal " + s);
                 receiver.close();
                 sender.close();
                 cluster.disconnect();
             })
-            .map(d -> readJson(new String(d.getBody())))
-            .filter(PurchaseOrder::isValid)
-            .doOnNext(po -> log("recevied po " + po))
-            .doOnDiscard(PurchaseOrder.class, 
-                    po -> log("Discarded invalid PO " + po))
-            .flatMap(po -> writePoJson(po).map(j -> reactiveCollection
-                    .upsert(po.getId(), j)
-                    .map(result -> po))
-                .orElse(Mono.just(po)))
-            .groupBy(po -> po.getType())
-            .flatMap((v) -> publisherMap.get(v.key()).apply(v))
+            .map(p -> readJson(new String(p.getBody())))
+            .map(p -> Tuples.of(ContextLogging.builder()
+                    .serviceName("PurchaseOrderConsumer")
+                    .eventId(p.eventId)
+                    .build(), p.po))
+            .filter(t -> t.getT2().isValid())
+            .doOnNext(t -> ContextLogging.log(t.getT1(), "recevied po " + t.getT2()))
+            .doOnDiscard(Tuple2.class, 
+                    t -> ContextLogging.log((ContextLogging)t.getT1(), "Discarded invalid PO " + t.getT2()))
+            .flatMap(t -> writePoJson(t.getT1(),t.getT2())
+                .map(j -> reactiveCollection
+                    .upsert(t.getT2().getId(), j)
+                    .map(result -> t))
+                .orElse(Mono.just(t)))
+            .groupBy(t -> t.getT2().getType())
+            .flatMap(v -> publisherMap.get(v.key()).apply(v))
             .subscribe();
     }
 
-    private static void log(String msg) {
-        System.out.println(Thread.currentThread().getName() + " " + msg);
-    }
-    
-    private static Optional<String> writePoJson(PurchaseOrder po) {
+    private static Optional<String> writePoJson(ContextLogging context, PurchaseOrder po) {
         try {
-            return Optional.of(poWriter.writeValueAsString(po));
+            Payload payload = new Payload();
+            payload.eventId = context.getEventId();
+            payload.po = po;
+            return Optional.of(poWriter.writeValueAsString(payload));
         } catch (JsonProcessingException ex) {
-            log("unable to serialize po");
+            ContextLogging.log(context, "unable to serialize po");
             ex.printStackTrace(System.out);
             return Optional.empty();
         }
     }
     
-    private static PurchaseOrder readJson(String po) {
+    public static class Payload {
+        public Payload() {}
+        public Payload(String eventId, PurchaseOrder po) {
+            this.eventId = eventId;
+            this.po = po;
+        }
+        public String eventId;
+        public PurchaseOrder po;
+    }
+    
+    private static Payload readJson(String po) {
         try {
             return reader.readValue(po);
         } catch (JsonProcessingException ex) {
-            log("unable to serialize po");
+            ContextLogging.log("unable to serialize po");
             ex.printStackTrace(System.out);
-            return PurchaseOrder.builder().build();
+            Payload empty = new Payload();
+            empty.eventId = "no event id";
+            empty.po = PurchaseOrder.builder().build();
+            return empty;
         } catch (IOException ex) {
-            log("unable to serialize po");
+            ContextLogging.log("unable to serialize po");
             ex.printStackTrace(System.out);
-            return PurchaseOrder.builder().build();
+            Payload empty = new Payload();
+            empty.eventId = "no event id";
+            empty.po = PurchaseOrder.builder().build();
+            return empty;
         }
     }
 
+    public static class CarPayload {
+        public CarPayload() {}
+        public CarPayload(String eventId, Vehicle.Car car) {
+            this.eventId = eventId;
+            this.car = car;
+        }
+        public String eventId;
+        public Vehicle.Car car;
+    }
+    
     private static Flux<OutboundMessageResult> getCarPublisher(Sender sender, 
-            GroupedFlux<String, PurchaseOrder> input) {
-        log("in get car publisher");
+            GroupedFlux<String, Tuple2<ContextLogging, PurchaseOrder>> input) {
         return sender.sendWithPublishConfirms(input
-            .map(po -> new Vehicle.Car(po))
-            .doOnNext(car -> log("sending car " + car))
-            .map(v -> {
+            .map(t -> Tuples.of(t.getT1(), new Vehicle.Car(t.getT2())))
+            .doOnNext(t -> ContextLogging.log(t.getT1(), "sending car " + t.getT2()))
+            .map(t -> {
                 try {
                     return Optional.of(objectMapper
-                            .writerFor(Vehicle.Car.class)
-                            .writeValueAsString(v));
+                            .writerFor(CarPayload.class)
+                            .writeValueAsString(new CarPayload(t.getT1().getEventId(), t.getT2())));
                 } catch (JsonProcessingException ex) {
                     return Optional.<String>empty();
                 }
@@ -157,23 +189,32 @@ public class PurchaseOrderConsumer {
             .filter(o -> o.isPresent())
             .map(o -> o.get())
             .doOnDiscard(String.class, 
-                    s -> log("Discarded invalid Car"))
+                    s -> ContextLogging.log("Discarded invalid Car"))
             .map(s -> new OutboundMessage("", 
                     CAR_QUEUE_NAME, 
                     s.getBytes())));
     }
     
+    public static class MotorcyclePayload {
+        public MotorcyclePayload() {}
+        public MotorcyclePayload(String eventId, Vehicle.Motorcycle motorcycle) {
+            this.eventId = eventId;
+            this.motorcycle = motorcycle;
+        }
+        public String eventId;
+        public Vehicle.Motorcycle motorcycle;
+    }
+    
     private static Flux<OutboundMessageResult> getMotorcyclePublisher(Sender sender, 
-            GroupedFlux<String, PurchaseOrder> input) {
-        log("in get motocycle publisher");
+            GroupedFlux<String, Tuple2<ContextLogging, PurchaseOrder>> input) {
         return sender.sendWithPublishConfirms(input
-            .map(po -> new Vehicle.Motorcycle(po))
-            .doOnNext(motorcycle -> log("sending motorcycle " + motorcycle))
-            .map(v -> {
+            .map(t -> Tuples.of(t.getT1(), new Vehicle.Motorcycle(t.getT2())))
+            .doOnNext(t -> ContextLogging.log(t.getT1(), "sending motorcycle " + t.getT2()))
+            .map(t -> {
                 try {
                     return Optional.of(objectMapper
-                            .writerFor(Vehicle.Motorcycle.class)
-                            .writeValueAsString(v));
+                            .writerFor(MotorcyclePayload.class)
+                            .writeValueAsString(new MotorcyclePayload(t.getT1().getEventId(), t.getT2())));
                 } catch (JsonProcessingException ex) {
                     return Optional.<String>empty();
                 }
@@ -181,23 +222,32 @@ public class PurchaseOrderConsumer {
             .filter(o -> o.isPresent())
             .map(o -> o.get())
             .doOnDiscard(String.class, 
-                    s -> log("Discarded invalid Motorcycle"))
+                    s -> ContextLogging.log("Discarded invalid Motorcycle"))
             .map(s -> new OutboundMessage("", 
                     MOTORCYCLE_QUEUE_NAME, 
                     s.getBytes())));
     }
     
+    public static class TruckPayload {
+        public TruckPayload() {}
+        public TruckPayload(String eventId, Vehicle.Truck truck) {
+            this.eventId = eventId;
+            this.truck = truck;
+        }
+        public String eventId;
+        public Vehicle.Truck truck;
+    }
+    
     private static Flux<OutboundMessageResult> getTruckPublisher(Sender sender, 
-            GroupedFlux<String, PurchaseOrder> input) {
-        log("in get truck publisher");
+            GroupedFlux<String, Tuple2<ContextLogging, PurchaseOrder>> input) {
         return sender.sendWithPublishConfirms(input
-            .map(po -> new Vehicle.Truck(po))
-            .doOnNext(truck -> log("sending truck " + truck))
-            .map(v -> {
+            .map(t -> Tuples.of(t.getT1(), new Vehicle.Truck(t.getT2())))
+            .doOnNext(t -> ContextLogging.log(t.getT1(), "sending truck " + t.getT2()))
+            .map(t -> {
                 try {
                     return Optional.of(objectMapper
-                            .writerFor(Vehicle.Truck.class)
-                            .writeValueAsString(v));
+                            .writerFor(TruckPayload.class)
+                            .writeValueAsString(new TruckPayload(t.getT1().getEventId(), t.getT2())));
                 } catch (JsonProcessingException ex) {
                     return Optional.<String>empty();
                 }
@@ -205,7 +255,7 @@ public class PurchaseOrderConsumer {
             .filter(o -> o.isPresent())
             .map(o -> o.get())
             .doOnDiscard(String.class, 
-                    s -> log("Discarded invalid Truck"))
+                    s -> ContextLogging.log("Discarded invalid Truck"))
             .map(s -> new OutboundMessage("", 
                     TRUCK_QUEUE_NAME, 
                     s.getBytes())));

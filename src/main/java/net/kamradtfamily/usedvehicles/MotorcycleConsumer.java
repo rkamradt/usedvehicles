@@ -33,14 +33,12 @@ import com.fasterxml.jackson.databind.ObjectReader;
 import com.rabbitmq.client.ConnectionFactory;
 import java.io.IOException;
 import java.time.Duration;
-import java.util.Optional;
-import reactor.core.publisher.Mono;
-import reactor.rabbitmq.QueueSpecification;
 import reactor.rabbitmq.RabbitFlux;
 import reactor.rabbitmq.Receiver;
 import reactor.rabbitmq.ReceiverOptions;
 import reactor.rabbitmq.Sender;
 import reactor.rabbitmq.SenderOptions;
+import reactor.util.function.Tuples;
 
 /**
  *
@@ -53,7 +51,7 @@ public class MotorcycleConsumer {
     private static final String USER_NAME = "guest";
     private static final String PASSWORD = "guest";
     private static final ObjectMapper objectMapper = new ObjectMapper();
-    static final ObjectReader motorcycleReader = objectMapper.readerFor(Vehicle.Motorcycle.class);
+    static final ObjectReader motorcycleReader = objectMapper.readerFor(Payload.class);
     static final Cluster cluster = Cluster.connect("127.0.0.1", "admin", "admin123");
     static final Bucket bucket = cluster.bucket("po");
     static final Collection collection = bucket.defaultCollection();
@@ -75,38 +73,54 @@ public class MotorcycleConsumer {
             .consumeAutoAck(MOTORCYCLE_QUEUE_NAME)
             .timeout(Duration.ofSeconds(10))
             .doFinally((s) -> {
-                log("Motorcycle consumer in finally for signal " + s);
+                ContextLogging.log("Motorcycle consumer in finally for signal " + s);
                 motorcycleReceiver.close();
                 sender.close();
             })
             .map(j -> readMotorcycleJson(new String(j.getBody())))
-            .flatMap(o -> Mono.justOrEmpty(o))
+            .map(c -> Tuples.of(ContextLogging.builder()
+                    .eventId(c.eventId)
+                    .serviceName("MotorcycleConsumer")
+                    .build(),new Vehicle.Motorcycle(c.motorcycle.getPo(),"motorcycle lot a")))
             .flatMap(v -> reactiveCollection
-                    .get(v.getPo().getId())
-                    .doOnNext(j -> log("po for motorcycle " + v.getPo().getId() + " confirmed"))
+                    .get(v.getT2().getPo().getId())
+                    .doOnNext(j -> ContextLogging.log(v.getT1(), "po for motorcycle " + v.getT2().getPo().getId() + " confirmed"))
                     .map(j -> v)
                     .single()
                     .onErrorReturn(v))
-            .map(c -> new Vehicle.Motorcycle(c.getPo(),"motorcycle lot a"))
-            .subscribe(v -> log("received motorcycle " + v));
+            .map(c -> Tuples.of(c.getT1(),
+                    new Vehicle.Motorcycle(c.getT2().getPo(),"motorcycle lot a")))
+            .subscribe(v -> ContextLogging.log(v.getT1(), "received motorcycle " + v));
                 
     }
     
-    private static void log(String msg) {
-        System.out.println(Thread.currentThread().getName() + " " + msg);
+    public static class Payload {
+        public Payload() {}
+        public Payload(String eventId, Vehicle.Motorcycle motorcycle) {
+            this.eventId = eventId;
+            this.motorcycle = motorcycle;
+        }
+        public String eventId;
+        public Vehicle.Motorcycle motorcycle;
     }
     
-    private static Optional<Vehicle.Motorcycle> readMotorcycleJson(String motorcycle) {
+    private static Payload readMotorcycleJson(String data) {
         try {
-            return Optional.of(motorcycleReader.readValue(motorcycle));
+            return motorcycleReader.readValue(data);
         } catch (JsonProcessingException ex) {
-            log("unable to serialize motorcycle");
+            ContextLogging.log("unable to serialize motorcycle");
             ex.printStackTrace(System.out);
-            return Optional.empty();
+            Payload empty = new Payload();
+            empty.eventId = "no event id";
+            empty.motorcycle = new Vehicle.Motorcycle();
+            return empty;
         } catch (IOException ex) {
-            log("unable to serialize motorcycle");
+            ContextLogging.log("unable to serialize motorcycle");
             ex.printStackTrace(System.out);
-            return Optional.empty();
+            Payload empty = new Payload();
+            empty.eventId = "no event id";
+            empty.motorcycle = new Vehicle.Motorcycle();
+            return empty;
         }
     }
     

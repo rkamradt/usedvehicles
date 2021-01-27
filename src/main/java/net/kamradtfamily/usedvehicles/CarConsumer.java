@@ -23,9 +23,7 @@
  */
 package net.kamradtfamily.usedvehicles;
 
-import com.couchbase.client.java.Bucket;
 import com.couchbase.client.java.Cluster;
-import com.couchbase.client.java.Collection;
 import com.couchbase.client.java.ReactiveCollection;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,7 +31,6 @@ import com.fasterxml.jackson.databind.ObjectReader;
 import com.rabbitmq.client.ConnectionFactory;
 import java.io.IOException;
 import java.time.Duration;
-import java.util.Optional;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -42,6 +39,8 @@ import reactor.rabbitmq.Receiver;
 import reactor.rabbitmq.ReceiverOptions;
 import reactor.rabbitmq.Sender;
 import reactor.rabbitmq.SenderOptions;
+import reactor.util.function.Tuple2;
+import reactor.util.function.Tuples;
 
 /**
  *
@@ -54,7 +53,7 @@ public class CarConsumer {
     private static final String USER_NAME = "guest";
     private static final String PASSWORD = "guest";
     private static final ObjectMapper objectMapper = new ObjectMapper();
-    static final ObjectReader carReader = objectMapper.readerFor(Vehicle.Car.class);
+    static final ObjectReader carReader = objectMapper.readerFor(Payload.class);
     static final Cluster cluster = Cluster.connect("127.0.0.1", "admin", "admin123");
     static final ReactiveCollection poReactiveCollection = 
             cluster.bucket("po")
@@ -81,62 +80,79 @@ public class CarConsumer {
             .consumeAutoAck(CAR_QUEUE_NAME)
             .timeout(Duration.ofSeconds(10))
             .doFinally((s) -> {
-                log("Car consumer in finally for signal " + s);
+                ContextLogging.log("Car consumer in finally for signal " + s);
                 carReceiver.close();
                 sender.close();
             })
-            .map(j -> readCarJson(new String(j.getBody())))
-            .flatMap(o -> Mono.justOrEmpty(o))
-            .map(c -> new Vehicle.Car(c.getPo(),"car lot a"))
-            .flatMap(v -> Flux.combineLatest((r) -> r[0], verifyCar(v), writeCar(v), wasteTime(v)))   
-            .subscribe(c -> log("received car " + c));
+            .map(d -> readCarJson(new String(d.getBody())))
+            .map(c -> Tuples.of(ContextLogging.builder()
+                    .eventId(c.eventId)
+                    .serviceName("CarConsumer")
+                    .build(),new Vehicle.Car(c.car.getPo(),"car lot a")))
+            .flatMap(t -> Flux.combineLatest(r -> (Tuple2<ContextLogging,Vehicle.Car>)r[0], 
+                    verifyCar(t), 
+                    writeCar(t), 
+                    wasteTime(t)))   
+            .subscribe(t -> ContextLogging.log(t.getT1(), "received car " + t.getT2()));
         
     }
     
-    private static Mono<Vehicle.Car> wasteTime(Vehicle.Car car) {
+    private static Mono<Tuple2<ContextLogging,Vehicle.Car>> wasteTime(Tuple2<ContextLogging,Vehicle.Car> car) {
         return Mono.fromCallable(() -> { 
             Thread.sleep(50);
             return car;
         })
         .subscribeOn(Schedulers.boundedElastic())
-        .doOnNext(c -> log("wasting time on car " + c));
+        .doOnNext(t -> ContextLogging.log(t.getT1(), "wasting time on car " + t.getT2()));
     }
     
-    private static Mono<Vehicle.Car> verifyCar(Vehicle.Car car) {
+    private static Mono<Tuple2<ContextLogging,Vehicle.Car>> verifyCar(Tuple2<ContextLogging,Vehicle.Car> car) {
         return poReactiveCollection
-                    .get(car.getPo().getId())
-                    .doOnNext(c -> log("po for car " + car + " confirmed"))
-                    .doOnError((t) -> log("error verifying car"))
+                    .get(car.getT2().getPo().getId())
+                    .doOnNext(c -> ContextLogging.log(car.getT1(), "po for car " + car.getT2() + " confirmed"))
+                    .doOnError((t) -> ContextLogging.log(car.getT1(), "error verifying car " + car.getT2()))
                     .map(j -> car)
                     .single()
                     .onErrorReturn(car);
     }
     
-    private static Mono<Vehicle.Car> writeCar(Vehicle.Car car) {
+    private static Mono<Tuple2<ContextLogging,Vehicle.Car>> writeCar(Tuple2<ContextLogging,Vehicle.Car> car) {
         return carReactiveCollection
-                .upsert(car.getPo().getId(), car)
-                .doOnNext(c -> log("inserted car " + car + " into car database"))
-                .doOnError((t) -> log("error inserting car"))
+                .upsert(car.getT2().getPo().getId(), car.getT2())
+                .doOnNext(c -> ContextLogging.log(car.getT1(), "inserted car " + car.getT2() + " into car database"))
+                .doOnError((t) -> ContextLogging.log(car.getT1(), "error inserting car"))
                 .map(j -> car)
                 .single()
                 .onErrorReturn(car);
     }
     
-    private static void log(String msg) {
-        System.out.println(Thread.currentThread().getName() + " " + msg);
+    public static class Payload {
+        public Payload() {}
+        public Payload(String eventId, Vehicle.Car car) {
+            this.eventId = eventId;
+            this.car = car;
+        }
+        public String eventId;
+        public Vehicle.Car car;
     }
     
-    private static Optional<Vehicle.Car> readCarJson(String car) {
+    private static Payload readCarJson(String data) {
         try {
-            return Optional.of(carReader.readValue(car));
+            return carReader.readValue(data);
         } catch (JsonProcessingException ex) {
-            log("unable to serialize car");
+            ContextLogging.log("unable to serialize motorcycle");
             ex.printStackTrace(System.out);
-            return Optional.empty();
+            Payload empty = new Payload();
+            empty.eventId = "no event id";
+            empty.car = new Vehicle.Car();
+            return empty;
         } catch (IOException ex) {
-            log("unable to serialize car");
+            ContextLogging.log("unable to serialize motorcycle");
             ex.printStackTrace(System.out);
-            return Optional.empty();
+            Payload empty = new Payload();
+            empty.eventId = "no event id";
+            empty.car = new Vehicle.Car();
+            return empty;
         }
     }
     

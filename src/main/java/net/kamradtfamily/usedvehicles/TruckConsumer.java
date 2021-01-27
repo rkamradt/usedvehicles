@@ -33,14 +33,12 @@ import com.fasterxml.jackson.databind.ObjectReader;
 import com.rabbitmq.client.ConnectionFactory;
 import java.io.IOException;
 import java.time.Duration;
-import java.util.Optional;
-import reactor.core.publisher.Mono;
-import reactor.rabbitmq.QueueSpecification;
 import reactor.rabbitmq.RabbitFlux;
 import reactor.rabbitmq.Receiver;
 import reactor.rabbitmq.ReceiverOptions;
 import reactor.rabbitmq.Sender;
 import reactor.rabbitmq.SenderOptions;
+import reactor.util.function.Tuples;
 
 /**
  *
@@ -53,7 +51,7 @@ public class TruckConsumer {
     private static final String USER_NAME = "guest";
     private static final String PASSWORD = "guest";
     private static final ObjectMapper objectMapper = new ObjectMapper();
-    static final ObjectReader truckReader = objectMapper.readerFor(Vehicle.Truck.class);
+    static final ObjectReader truckReader = objectMapper.readerFor(Payload.class);
     static final Cluster cluster = Cluster.connect("127.0.0.1", "admin", "admin123");
     static final Bucket bucket = cluster.bucket("po");
     static final Collection collection = bucket.defaultCollection();
@@ -75,38 +73,54 @@ public class TruckConsumer {
             .consumeAutoAck(TRUCK_QUEUE_NAME)
             .timeout(Duration.ofSeconds(10))
             .doFinally((s) -> {
-                log("Truck consumer in finally for signal " + s);
+                ContextLogging.log("Truck consumer in finally for signal " + s);
                 truckReceiver.close();
                 sender.close();
             })
             .map(j -> readTruckJson(new String(j.getBody())))
-            .flatMap(o -> Mono.justOrEmpty(o))
+            .map(c -> Tuples.of(ContextLogging.builder()
+                    .eventId(c.eventId)
+                    .serviceName("TruckConsumer")
+                    .build(),new Vehicle.Truck(c.truck.getPo(),"truck lot a")))
             .flatMap(v -> reactiveCollection
-                    .get(v.getPo().getId())
-                    .doOnNext(j -> log("po for truck " + v.getPo().getId() + " confirmed"))
+                    .get(v.getT2().getPo().getId())
+                    .doOnNext(j -> ContextLogging.log(v.getT1(), "po for truck " + v.getT2().getPo().getId() + " confirmed"))
                     .map(j -> v)
                     .single()
                     .onErrorReturn(v))
-            .map(c -> new Vehicle.Truck(c.getPo(),"truck lot a"))
-            .subscribe(v -> log("received truck " + v));
+            .map(c -> Tuples.of(c.getT1(),
+                    new Vehicle.Truck(c.getT2().getPo(),"truck lot a")))
+            .subscribe(v -> ContextLogging.log(v.getT1(), "received truck " + v.getT2()));
     }
     
-    private static void log(String msg) {
-        System.out.println(Thread.currentThread().getName() + " " + msg);
+    public static class Payload {
+        public Payload() {}
+        public Payload(String eventId, Vehicle.Truck truck) {
+            this.eventId = eventId;
+            this.truck = truck;
+        }
+        public String eventId;
+        public Vehicle.Truck truck;
     }
     
-    private static Optional<Vehicle.Truck> readTruckJson(String truck) {
+    private static Payload readTruckJson(String data) {
         try {
-            return Optional.of(truckReader.readValue(truck));
+            return truckReader.readValue(data);
         } catch (JsonProcessingException ex) {
-            log("unable to serialize truck");
+            ContextLogging.log("unable to serialize truck");
             ex.printStackTrace(System.out);
-            return Optional.empty();
+            Payload empty = new Payload();
+            empty.eventId = "no event id";
+            empty.truck = new Vehicle.Truck();
+            return empty;
         } catch (IOException ex) {
-            log("unable to serialize truck");
+            ContextLogging.log("unable to serialize truck");
             ex.printStackTrace(System.out);
-            return Optional.empty();
+            Payload empty = new Payload();
+            empty.eventId = "no event id";
+            empty.truck = new Vehicle.Truck();
+            return empty;
         }
     }
-    
+
 }

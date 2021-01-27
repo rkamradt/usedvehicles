@@ -33,6 +33,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.Random;
+import java.util.UUID;
 import net.kamradtfamily.usedvehicles.PurchaseOrder.PurchaseOrderBuilder;
 import reactor.core.publisher.Flux;
 import reactor.rabbitmq.OutboundMessage;
@@ -40,6 +41,7 @@ import reactor.rabbitmq.QueueSpecification;
 import reactor.rabbitmq.RabbitFlux;
 import reactor.rabbitmq.Sender;
 import reactor.rabbitmq.SenderOptions;
+import reactor.util.function.Tuples;
 
 /**
  *
@@ -52,35 +54,38 @@ public class PurchaseOrderGenerator {
     private static final String USER_NAME = "guest";
     private static final String PASSWORD = "guest";
     private static final ObjectMapper objectMapper = new ObjectMapper();
-    private static final ObjectWriter writer = objectMapper.writerFor(PurchaseOrder.class);
+    private static final ObjectWriter writer = objectMapper.writerFor(Payload.class);
     private static final Random random = new Random();
     
     public static void start() {
-        ConnectionFactory cfactory = new ConnectionFactory();
+        final ConnectionFactory cfactory = new ConnectionFactory();
         cfactory.setHost(HOST_NAME);
         cfactory.setPort(PORT);
         cfactory.setUsername(USER_NAME);
         cfactory.setPassword(PASSWORD);
-        SenderOptions soptions = new SenderOptions()
+        final SenderOptions soptions = new SenderOptions()
                 .connectionFactory(cfactory);
-        Sender sender = RabbitFlux.createSender(soptions);
+        final Sender sender = RabbitFlux.createSender(soptions);
         sender.declareQueue(QueueSpecification.queue(QUEUE_NAME));        
         sender.sendWithPublishConfirms(
             Flux.generate((sink) -> sink.next(createRandomPurchaseOrder()))
                 .cast(PurchaseOrder.class)
+                .map(i -> Tuples.of(ContextLogging.builder()
+                    .serviceName("PurchaseOrderGenerator")
+                    .eventId(UUID.randomUUID().toString())
+                    .build(), i))
                 .delayElements(Duration.ofMillis(100))
                 .take(Duration.ofMillis(1000))
-                .doOnNext((o) -> log("produced: " + o))
+                .doOnNext((o) -> ContextLogging.log(o.getT1(), "produced: " + o.getT2()))
                 .map(i -> new OutboundMessage("", 
                         QUEUE_NAME, 
-                        writeJson(i).orElse("").getBytes()))
+                        writeJson(i.getT1(), i.getT2()).orElse("").getBytes()))
                 .doFinally((s) -> {
-                    log("Generator in finally for signal " + s);
+                    ContextLogging.log("PurchaseOrderGenerator in finally for signal " + s); // this is done one, no context
                     sender.close();
                 })
         )
         .subscribe();
-
     }
     
     private static PurchaseOrder createRandomPurchaseOrder() {
@@ -93,15 +98,21 @@ public class PurchaseOrderGenerator {
                 .build();
     }
     
-    private static void log(String msg) {
-        System.out.println(Thread.currentThread().getName() + " " + msg);
+    public static class Payload {
+        public Payload() {}
+        public Payload(String eventId, PurchaseOrder po) {
+            this.eventId = eventId;
+            this.po = po;
+        }
+        public String eventId;
+        public PurchaseOrder po;
     }
     
-    private static Optional<String> writeJson(PurchaseOrder po) {
+    private static Optional<String> writeJson(ContextLogging context, PurchaseOrder po) {
         try {
-            return Optional.of(writer.writeValueAsString(po));
+            return Optional.of(writer.writeValueAsString(new Payload(context.getEventId(),po)));
         } catch (JsonProcessingException ex) {
-            log("unable to serialize po");
+            ContextLogging.log(context, "unable to serialize po");
             ex.printStackTrace(System.out);
             return Optional.empty();
         }
