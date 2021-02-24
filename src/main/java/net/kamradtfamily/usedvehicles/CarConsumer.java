@@ -25,11 +25,10 @@ package net.kamradtfamily.usedvehicles;
 
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.ReactiveCollection;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.rabbitmq.client.ConnectionFactory;
-import java.io.IOException;
+import io.github.rkamradt.possibly.PossiblyFunction;
 import java.time.Duration;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -79,12 +78,16 @@ public class CarConsumer {
         carReceiver
             .consumeAutoAck(CAR_QUEUE_NAME)
             .timeout(Duration.ofSeconds(10))
+            .onErrorStop()
             .doFinally((s) -> {
                 ContextLogging.log("Car consumer in finally for signal " + s);
                 carReceiver.close();
                 sender.close();
             })
-            .map(d -> readCarJson(new String(d.getBody())))
+            .doOnNext(d -> ContextLogging.log("received car " + new String(d.getBody())))
+            .map(PossiblyFunction.of(d -> carReader.readValue(new String(d.getBody()))))
+            .map(p -> p.getValue().orElseGet(() -> new Payload("unknown event id", new Vehicle.Car())))
+            .cast(Payload.class)
             .map(c -> Tuples.of(ContextLogging.builder()
                     .eventId(c.eventId)
                     .serviceName("CarConsumer")
@@ -110,7 +113,7 @@ public class CarConsumer {
         return poReactiveCollection
                     .get(car.getT2().getPo().getId())
                     .doOnNext(c -> ContextLogging.log(car.getT1(), "po for car " + car.getT2() + " confirmed"))
-                    .doOnError((t) -> ContextLogging.log(car.getT1(), "error verifying car " + car.getT2()))
+                    .doOnError(t -> ContextLogging.log(car.getT1(), "error verifying car " + car.getT2() + t))
                     .map(j -> car)
                     .single()
                     .onErrorReturn(car);
@@ -136,24 +139,5 @@ public class CarConsumer {
         public Vehicle.Car car;
     }
     
-    private static Payload readCarJson(String data) {
-        try {
-            return carReader.readValue(data);
-        } catch (JsonProcessingException ex) {
-            ContextLogging.log("unable to serialize motorcycle");
-            ex.printStackTrace(System.out);
-            Payload empty = new Payload();
-            empty.eventId = "no event id";
-            empty.car = new Vehicle.Car();
-            return empty;
-        } catch (IOException ex) {
-            ContextLogging.log("unable to serialize motorcycle");
-            ex.printStackTrace(System.out);
-            Payload empty = new Payload();
-            empty.eventId = "no event id";
-            empty.car = new Vehicle.Car();
-            return empty;
-        }
-    }
     
 }

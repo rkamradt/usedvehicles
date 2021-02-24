@@ -27,11 +27,10 @@ import com.couchbase.client.java.Bucket;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.Collection;
 import com.couchbase.client.java.ReactiveCollection;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.rabbitmq.client.ConnectionFactory;
-import java.io.IOException;
+import io.github.rkamradt.possibly.PossiblyFunction;
 import java.time.Duration;
 import reactor.rabbitmq.RabbitFlux;
 import reactor.rabbitmq.Receiver;
@@ -72,12 +71,17 @@ public class MotorcycleConsumer {
         motorcycleReceiver
             .consumeAutoAck(MOTORCYCLE_QUEUE_NAME)
             .timeout(Duration.ofSeconds(10))
+            .onErrorStop()
             .doFinally((s) -> {
                 ContextLogging.log("Motorcycle consumer in finally for signal " + s);
                 motorcycleReceiver.close();
                 sender.close();
             })
-            .map(j -> readMotorcycleJson(new String(j.getBody())))
+            .map(PossiblyFunction.of(d -> motorcycleReader.readValue(new String(d.getBody()))))
+            .map(p -> p.exceptional() 
+                    ? new Payload("unknown event id", new Vehicle.Motorcycle())
+                    : p.getValue().get())
+            .cast(Payload.class)
             .map(c -> Tuples.of(ContextLogging.builder()
                     .eventId(c.eventId)
                     .serviceName("MotorcycleConsumer")
@@ -103,25 +107,5 @@ public class MotorcycleConsumer {
         public String eventId;
         public Vehicle.Motorcycle motorcycle;
     }
-    
-    private static Payload readMotorcycleJson(String data) {
-        try {
-            return motorcycleReader.readValue(data);
-        } catch (JsonProcessingException ex) {
-            ContextLogging.log("unable to serialize motorcycle");
-            ex.printStackTrace(System.out);
-            Payload empty = new Payload();
-            empty.eventId = "no event id";
-            empty.motorcycle = new Vehicle.Motorcycle();
-            return empty;
-        } catch (IOException ex) {
-            ContextLogging.log("unable to serialize motorcycle");
-            ex.printStackTrace(System.out);
-            Payload empty = new Payload();
-            empty.eventId = "no event id";
-            empty.motorcycle = new Vehicle.Motorcycle();
-            return empty;
-        }
-    }
-    
+       
 }

@@ -24,6 +24,7 @@
 package net.kamradtfamily.usedvehicles;
 
 import com.rabbitmq.client.ConnectionFactory;
+import reactor.core.publisher.Hooks;
 import reactor.rabbitmq.QueueSpecification;
 import reactor.rabbitmq.RabbitFlux;
 import reactor.rabbitmq.Sender;
@@ -44,6 +45,9 @@ public class Main {
     private static final String PASSWORD = "guest";
     static final Factory<String, Vehicle, PurchaseOrder> factory = new Factory<>();
     public static void main(String [] args) throws InterruptedException {
+        Hooks.onErrorDropped(error -> {
+            ContextLogging.log("error dropped " + error);
+        });
         ConnectionFactory cfactory = new ConnectionFactory();
         cfactory.setHost(HOST_NAME);
         cfactory.setPort(PORT);
@@ -53,14 +57,8 @@ public class Main {
                 .connectionFactory(cfactory);
         try (Sender sender = RabbitFlux.createSender(soptions)) {
             sender.declareQueue(QueueSpecification.queue(PO_QUEUE_NAME));
-        }
-        try (Sender sender = RabbitFlux.createSender(soptions)) {
             sender.declareQueue(QueueSpecification.queue(CAR_QUEUE_NAME));
-        }
-        try (Sender sender = RabbitFlux.createSender(soptions)) {
             sender.declareQueue(QueueSpecification.queue(TRUCK_QUEUE_NAME));
-        }
-        try (Sender sender = RabbitFlux.createSender(soptions)) {
             sender.declareQueue(QueueSpecification.queue(MOTORCYCLE_QUEUE_NAME));
         }
         CarConsumer.consume();

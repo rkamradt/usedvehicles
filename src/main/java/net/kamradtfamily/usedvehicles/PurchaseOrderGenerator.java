@@ -23,15 +23,14 @@
  */
 package net.kamradtfamily.usedvehicles;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.rabbitmq.client.ConnectionFactory;
+import io.github.rkamradt.possibly.PossiblyFunction;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
 import net.kamradtfamily.usedvehicles.PurchaseOrder.PurchaseOrderBuilder;
@@ -77,9 +76,15 @@ public class PurchaseOrderGenerator {
                 .delayElements(Duration.ofMillis(100))
                 .take(Duration.ofMillis(1000))
                 .doOnNext((o) -> ContextLogging.log(o.getT1(), "produced: " + o.getT2()))
+                .map(t -> t.mapT2(PossiblyFunction.of(po -> 
+                        writer.writeValueAsString(new Payload(t.getT1().getEventId(),po)))))
                 .map(i -> new OutboundMessage("", 
                         QUEUE_NAME, 
-                        writeJson(i.getT1(), i.getT2()).orElse("").getBytes()))
+                        i.getT2()
+                                .doOnException(e -> ContextLogging.log(i.getT1(), "unable to serialize po"))
+                                .getValue()
+                                .orElse("")
+                                .getBytes()))
                 .doFinally((s) -> {
                     ContextLogging.log("PurchaseOrderGenerator in finally for signal " + s); // this is done one, no context
                     sender.close();
@@ -106,16 +111,6 @@ public class PurchaseOrderGenerator {
         }
         public String eventId;
         public PurchaseOrder po;
-    }
-    
-    private static Optional<String> writeJson(ContextLogging context, PurchaseOrder po) {
-        try {
-            return Optional.of(writer.writeValueAsString(new Payload(context.getEventId(),po)));
-        } catch (JsonProcessingException ex) {
-            ContextLogging.log(context, "unable to serialize po");
-            ex.printStackTrace(System.out);
-            return Optional.empty();
-        }
     }
     
 }

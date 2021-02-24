@@ -27,15 +27,13 @@ import com.couchbase.client.java.Bucket;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.Collection;
 import com.couchbase.client.java.ReactiveCollection;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.rabbitmq.client.ConnectionFactory;
-import java.io.IOException;
+import io.github.rkamradt.possibly.PossiblyFunction;
 import java.time.Duration;
 import java.util.Map;
-import java.util.Optional;
 import java.util.function.Function;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -71,6 +69,9 @@ public class PurchaseOrderConsumer {
     private static final ReactiveCollection reactiveCollection = collection.reactive();
     private static final ObjectMapper objectMapper = new ObjectMapper();
     private static final ObjectWriter poWriter = objectMapper.writerFor(Payload.class);
+    private static final ObjectWriter carWriter = objectMapper.writerFor(CarPayload.class);
+    private static final ObjectWriter motorcycleWriter = objectMapper.writerFor(MotorcyclePayload.class);
+    private static final ObjectWriter truckWriter = objectMapper.writerFor(TruckPayload.class);
     private static final ObjectReader reader = objectMapper.readerFor(Payload.class);
     
     public static void consume() {
@@ -100,7 +101,11 @@ public class PurchaseOrderConsumer {
                 sender.close();
                 cluster.disconnect();
             })
-            .map(p -> readJson(new String(p.getBody())))
+            .map(PossiblyFunction.of(p -> reader.readValue((new String(p.getBody())))))
+            .map(p -> p.exceptional() 
+                    ? new Payload("unknown event id", PurchaseOrder.builder().build())
+                    : p.getValue().get())
+            .cast(Payload.class)
             .map(p -> Tuples.of(ContextLogging.builder()
                     .serviceName("PurchaseOrderConsumer")
                     .eventId(p.eventId)
@@ -109,9 +114,12 @@ public class PurchaseOrderConsumer {
             .doOnNext(t -> ContextLogging.log(t.getT1(), "recevied po " + t.getT2()))
             .doOnDiscard(Tuple2.class, 
                     t -> ContextLogging.log((ContextLogging)t.getT1(), "Discarded invalid PO " + t.getT2()))
-            .flatMap(t -> writePoJson(t.getT1(),t.getT2())
+            .flatMap(t -> PossiblyFunction.of(s -> poWriter.writeValueAsString(new Payload(t.getT1().getEventId(),t.getT2()))).apply(t)
+                .getValue()
                 .map(j -> reactiveCollection
                     .upsert(t.getT2().getId(), j)
+                    .doOnNext(r -> ContextLogging.log(t.getT1(), "upserted po"))
+                    .doOnError(r -> ContextLogging.log(t.getT1(), "error upserting po"))
                     .map(result -> t))
                 .orElse(Mono.just(t)))
             .groupBy(t -> t.getT2().getType())
@@ -119,19 +127,6 @@ public class PurchaseOrderConsumer {
             .subscribe();
     }
 
-    private static Optional<String> writePoJson(ContextLogging context, PurchaseOrder po) {
-        try {
-            Payload payload = new Payload();
-            payload.eventId = context.getEventId();
-            payload.po = po;
-            return Optional.of(poWriter.writeValueAsString(payload));
-        } catch (JsonProcessingException ex) {
-            ContextLogging.log(context, "unable to serialize po");
-            ex.printStackTrace(System.out);
-            return Optional.empty();
-        }
-    }
-    
     public static class Payload {
         public Payload() {}
         public Payload(String eventId, PurchaseOrder po) {
@@ -142,26 +137,6 @@ public class PurchaseOrderConsumer {
         public PurchaseOrder po;
     }
     
-    private static Payload readJson(String po) {
-        try {
-            return reader.readValue(po);
-        } catch (JsonProcessingException ex) {
-            ContextLogging.log("unable to serialize po");
-            ex.printStackTrace(System.out);
-            Payload empty = new Payload();
-            empty.eventId = "no event id";
-            empty.po = PurchaseOrder.builder().build();
-            return empty;
-        } catch (IOException ex) {
-            ContextLogging.log("unable to serialize po");
-            ex.printStackTrace(System.out);
-            Payload empty = new Payload();
-            empty.eventId = "no event id";
-            empty.po = PurchaseOrder.builder().build();
-            return empty;
-        }
-    }
-
     public static class CarPayload {
         public CarPayload() {}
         public CarPayload(String eventId, Vehicle.Car car) {
@@ -177,15 +152,9 @@ public class PurchaseOrderConsumer {
         return sender.sendWithPublishConfirms(input
             .map(t -> Tuples.of(t.getT1(), new Vehicle.Car(t.getT2())))
             .doOnNext(t -> ContextLogging.log(t.getT1(), "sending car " + t.getT2()))
-            .map(t -> {
-                try {
-                    return Optional.of(objectMapper
-                            .writerFor(CarPayload.class)
-                            .writeValueAsString(new CarPayload(t.getT1().getEventId(), t.getT2())));
-                } catch (JsonProcessingException ex) {
-                    return Optional.<String>empty();
-                }
-            })
+            .map(PossiblyFunction.of(t -> carWriter.writeValueAsString(new CarPayload(t.getT1().getEventId(), t.getT2()))))
+            .doOnNext(p -> p.doOnException(e -> ContextLogging.log("exception writing car to json" + e)))
+            .map(p -> p.getValue())
             .filter(o -> o.isPresent())
             .map(o -> o.get())
             .doOnDiscard(String.class, 
@@ -210,15 +179,8 @@ public class PurchaseOrderConsumer {
         return sender.sendWithPublishConfirms(input
             .map(t -> Tuples.of(t.getT1(), new Vehicle.Motorcycle(t.getT2())))
             .doOnNext(t -> ContextLogging.log(t.getT1(), "sending motorcycle " + t.getT2()))
-            .map(t -> {
-                try {
-                    return Optional.of(objectMapper
-                            .writerFor(MotorcyclePayload.class)
-                            .writeValueAsString(new MotorcyclePayload(t.getT1().getEventId(), t.getT2())));
-                } catch (JsonProcessingException ex) {
-                    return Optional.<String>empty();
-                }
-            })
+            .map(PossiblyFunction.of(t -> motorcycleWriter.writeValueAsString(new MotorcyclePayload(t.getT1().getEventId(), t.getT2()))))
+            .map(p -> p.getValue())
             .filter(o -> o.isPresent())
             .map(o -> o.get())
             .doOnDiscard(String.class, 
@@ -243,15 +205,8 @@ public class PurchaseOrderConsumer {
         return sender.sendWithPublishConfirms(input
             .map(t -> Tuples.of(t.getT1(), new Vehicle.Truck(t.getT2())))
             .doOnNext(t -> ContextLogging.log(t.getT1(), "sending truck " + t.getT2()))
-            .map(t -> {
-                try {
-                    return Optional.of(objectMapper
-                            .writerFor(TruckPayload.class)
-                            .writeValueAsString(new TruckPayload(t.getT1().getEventId(), t.getT2())));
-                } catch (JsonProcessingException ex) {
-                    return Optional.<String>empty();
-                }
-            })
+            .map(PossiblyFunction.of(t -> truckWriter.writeValueAsString(new TruckPayload(t.getT1().getEventId(), t.getT2()))))
+            .map(p -> p.getValue())
             .filter(o -> o.isPresent())
             .map(o -> o.get())
             .doOnDiscard(String.class, 
