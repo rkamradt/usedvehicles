@@ -97,7 +97,6 @@ public class PurchaseOrderConsumer {
             "Motorcycle", (o) -> getMotorcyclePublisher(sender, o));
         receiver
             .consumeAutoAck(PO_QUEUE_NAME)
-            .timeout(Duration.ofSeconds(10))
             .doFinally((s) -> {
                 ContextLogging.log("Purchace Order Consumer in finally for signal " + s);
                 receiver.close();

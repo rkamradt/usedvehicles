@@ -46,6 +46,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>13</maven.compiler.source>
         <maven.compiler.target>13</maven.compiler.target>
+        <image>rlkamradt/${project.artifactId}:${project.version}</image>
     </properties>
     
     <dependencyManagement>
@@ -99,11 +100,6 @@
                 <version>1.0.1</version>
             </dependency>
             <dependency>
-                <groupId>ch.qos.logback</groupId>
-                <artifactId>logback-classic</artifactId>
-                <version>1.2.3</version>
-            </dependency>
-            <dependency>
                 <groupId>io.projectreactor</groupId>
                 <artifactId>reactor-test</artifactId>
                 <version>3.4.3</version>
@@ -129,4 +125,41 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>pl.project13.maven</groupId>
+                <artifactId>git-commit-id-plugin</artifactId>
+                <version>4.0.3</version>
+                <executions>
+                    <execution>
+                        <id>run-git-commit</id>
+                        <phase>initialize</phase>
+                        <goals>
+                            <goal>revision</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <generateGitPropertiesFile>true</generateGitPropertiesFile>
+                    <skipPoms>true</skipPoms>
+                    <injectAllReactorProjects>true</injectAllReactorProjects>
+                </configuration>    
+            </plugin>
+        </plugins>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>com.google.cloud.tools</groupId>
+                    <artifactId>jib-maven-plugin</artifactId>
+                    <version>2.7.1</version>
+                    <configuration>
+                        <from>
+                            <image>openjdk:13.0.2</image>
+                        </from>
+                    </configuration>
+            </plugin>
+          </plugins>
+        </pluginManagement>
+    </build>
 </project>

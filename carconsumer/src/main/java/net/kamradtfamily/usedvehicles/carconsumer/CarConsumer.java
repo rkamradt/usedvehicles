@@ -79,7 +79,6 @@ public class CarConsumer {
         Receiver carReceiver = RabbitFlux.createReceiver(roptions);
         carReceiver
             .consumeAutoAck(CAR_QUEUE_NAME)
-            .timeout(Duration.ofSeconds(10))
             .onErrorStop()
             .doFinally((s) -> {
                 ContextLogging.log("Car consumer in finally for signal " + s);

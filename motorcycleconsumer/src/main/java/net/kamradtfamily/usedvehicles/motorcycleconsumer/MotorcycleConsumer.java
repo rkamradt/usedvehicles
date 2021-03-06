@@ -72,7 +72,6 @@ public class MotorcycleConsumer {
         Receiver motorcycleReceiver = RabbitFlux.createReceiver(roptions);
         motorcycleReceiver
             .consumeAutoAck(MOTORCYCLE_QUEUE_NAME)
-            .timeout(Duration.ofSeconds(10))
             .onErrorStop()
             .doFinally((s) -> {
                 ContextLogging.log("Motorcycle consumer in finally for signal " + s);
