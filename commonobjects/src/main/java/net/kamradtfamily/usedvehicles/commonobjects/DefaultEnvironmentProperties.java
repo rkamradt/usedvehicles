@@ -42,7 +42,7 @@ public final class DefaultEnvironmentProperties
     private final static Pattern REPLACEMENT_PATTERN 
             = Pattern.compile("([$][$])|([$][{].*[}])|([$]\\w+)");
     
-    public DefaultEnvironmentProperties() throws IOException {
+    public DefaultEnvironmentProperties() {
         Map<String, String> tempMap;
         try(InputStream is = DefaultEnvironmentProperties
                 .class

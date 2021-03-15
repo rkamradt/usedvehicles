@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-package net.kamradtfamily.usedvehicles;
+package net.kamradtfamily.usedvehicles.testgenerator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
@@ -34,6 +34,8 @@ import java.time.Instant;
 import java.util.Random;
 import java.util.UUID;
 import net.kamradtfamily.usedvehicles.commonobjects.ContextLogging;
+import net.kamradtfamily.usedvehicles.commonobjects.DefaultEnvironmentProperties;
+import net.kamradtfamily.usedvehicles.commonobjects.EnvironmentProperties;
 import net.kamradtfamily.usedvehicles.commonobjects.PurchaseOrder;
 import reactor.core.publisher.Flux;
 import reactor.rabbitmq.OutboundMessage;
@@ -48,25 +50,32 @@ import reactor.util.function.Tuples;
  * @author randalkamradt
  */
 public class PurchaseOrderGenerator {
-    private static final String QUEUE_NAME = "po-queue";
-    private static final String HOST_NAME = "localhost";
-    private static final int PORT = 5672;
-    private static final String USER_NAME = "guest";
-    private static final String PASSWORD = "guest";
+    private static final EnvironmentProperties env = new DefaultEnvironmentProperties();
+     private static final String QUEUE_HOST_NAME  = 
+            env.getEnvironmentProperties("queue.host.name").orElseThrow();
+    private static final String QUEUE_PORT = 
+            env.getEnvironmentProperties("queue.port").orElseThrow();
+    private static final String QUEUE_USER_NAME = 
+            env.getEnvironmentProperties("queue.user.name").orElseThrow();
+    private static final String QUEUE_PASSWORD = 
+            env.getEnvironmentProperties("queue.password").orElseThrow();
+    private static final String QUEUE_TOPIC_PO = 
+            env.getEnvironmentProperties("queue.topic.po").orElseThrow();
+    
     private static final ObjectMapper objectMapper = new ObjectMapper();
     private static final ObjectWriter writer = objectMapper.writerFor(Payload.class);
     private static final Random random = new Random();
     
     public static void start() {
         final ConnectionFactory cfactory = new ConnectionFactory();
-        cfactory.setHost(HOST_NAME);
-        cfactory.setPort(PORT);
-        cfactory.setUsername(USER_NAME);
-        cfactory.setPassword(PASSWORD);
+        cfactory.setHost(QUEUE_HOST_NAME);
+        cfactory.setPort(Integer.parseInt(QUEUE_PORT));
+        cfactory.setUsername(QUEUE_USER_NAME);
+        cfactory.setPassword(QUEUE_PASSWORD);
         final SenderOptions soptions = new SenderOptions()
                 .connectionFactory(cfactory);
         final Sender sender = RabbitFlux.createSender(soptions);
-        sender.declareQueue(QueueSpecification.queue(QUEUE_NAME));        
+        sender.declareQueue(QueueSpecification.queue(QUEUE_TOPIC_PO));        
         sender.sendWithPublishConfirms(
             Flux.generate((sink) -> sink.next(createRandomPurchaseOrder()))
                 .cast(PurchaseOrder.class)
@@ -80,7 +89,7 @@ public class PurchaseOrderGenerator {
                 .map(t -> t.mapT2(PossiblyFunction.of(po -> 
                         writer.writeValueAsString(new Payload(t.getT1().getEventId(),po)))))
                 .map(i -> new OutboundMessage("", 
-                        QUEUE_NAME, 
+                        QUEUE_TOPIC_PO, 
                         i.getT2()
                                 .doOnException(e -> ContextLogging.log(i.getT1(), "unable to serialize po"))
                                 .getValue()

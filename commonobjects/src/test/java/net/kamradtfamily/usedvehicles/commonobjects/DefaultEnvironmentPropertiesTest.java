@@ -25,7 +25,6 @@ package net.kamradtfamily.usedvehicles.commonobjects;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;

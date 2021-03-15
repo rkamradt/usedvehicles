@@ -32,10 +32,11 @@ import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.rabbitmq.client.ConnectionFactory;
 import io.github.rkamradt.possibly.PossiblyFunction;
-import java.time.Duration;
 import java.util.Map;
 import java.util.function.Function;
 import net.kamradtfamily.usedvehicles.commonobjects.ContextLogging;
+import net.kamradtfamily.usedvehicles.commonobjects.DefaultEnvironmentProperties;
+import net.kamradtfamily.usedvehicles.commonobjects.EnvironmentProperties;
 import net.kamradtfamily.usedvehicles.commonobjects.PurchaseOrder;
 import net.kamradtfamily.usedvehicles.commonobjects.Vehicle;
 import org.reactivestreams.Publisher;
@@ -57,17 +58,36 @@ import reactor.util.function.Tuples;
  * @author randalkamradt
  */
 public class PurchaseOrderConsumer {
-    private static final String PO_QUEUE_NAME = "po-queue";
-    private static final String CAR_QUEUE_NAME = "car-queue";
-    private static final String TRUCK_QUEUE_NAME = "truck-queue";
-    private static final String MOTORCYCLE_QUEUE_NAME = "motorcycle-queue";
-
-    private static final String HOST_NAME = "rabbit";
-    private static final int PORT = 5672;
-    private static final String USER_NAME = "guest";
-    private static final String PASSWORD = "guest";
-    private static final Cluster cluster = Cluster.connect("192.168.0.174", "admin", "admin123");
-    private static final Bucket bucket = cluster.bucket("po");
+    private static final EnvironmentProperties env = new DefaultEnvironmentProperties();
+    private static final String DATABASE_USER_NAME = 
+            env.getEnvironmentProperties("database.user.name").orElseThrow();
+    private static final String DATABASE_HOST_NAME = 
+            env.getEnvironmentProperties("database.host.name").orElseThrow();
+    private static final String DATABASE_PASSWORD  = 
+            env.getEnvironmentProperties("database.password").orElseThrow();
+    private static final String DATABASE_BUCKET_NAME_PO = 
+            env.getEnvironmentProperties("database.bucket.name.po").orElseThrow();
+    private static final String QUEUE_HOST_NAME  = 
+            env.getEnvironmentProperties("queue.host.name").orElseThrow();
+    private static final String QUEUE_PORT = 
+            env.getEnvironmentProperties("queue.port").orElseThrow();
+    private static final String QUEUE_USER_NAME = 
+            env.getEnvironmentProperties("queue.user.name").orElseThrow();
+    private static final String QUEUE_PASSWORD = 
+            env.getEnvironmentProperties("queue.password").orElseThrow();
+    private static final String QUEUE_TOPIC_PO = 
+            env.getEnvironmentProperties("queue.topic.po").orElseThrow();
+    private static final String QUEUE_TOPIC_CAR = 
+            env.getEnvironmentProperties("queue.topic.car").orElseThrow();
+    private static final String QUEUE_TOPIC_TRUCK = 
+            env.getEnvironmentProperties("queue.topic.truck").orElseThrow();
+    private static final String QUEUE_TOPIC_MOTORCYCLE = 
+            env.getEnvironmentProperties("queue.topic.motorcycle").orElseThrow();
+    
+    private static final Cluster cluster = Cluster.connect(DATABASE_HOST_NAME, 
+            DATABASE_USER_NAME, 
+            DATABASE_PASSWORD);
+    private static final Bucket bucket = cluster.bucket(DATABASE_BUCKET_NAME_PO);
     private static final Collection collection = bucket.defaultCollection();
     private static final ReactiveCollection reactiveCollection = collection.reactive();
     private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -79,10 +99,10 @@ public class PurchaseOrderConsumer {
     
     public static void consume() {
         ConnectionFactory cfactory = new ConnectionFactory();
-        cfactory.setHost(HOST_NAME);
-        cfactory.setPort(PORT);
-        cfactory.setUsername(USER_NAME);
-        cfactory.setPassword(PASSWORD);
+        cfactory.setHost(QUEUE_HOST_NAME);
+        cfactory.setPort(Integer.parseInt(QUEUE_PORT));
+        cfactory.setUsername(QUEUE_USER_NAME);
+        cfactory.setPassword(QUEUE_PASSWORD);
         SenderOptions soptions = new SenderOptions()
                 .connectionFactory(cfactory);
         ReceiverOptions roptions = new ReceiverOptions()
@@ -96,7 +116,7 @@ public class PurchaseOrderConsumer {
             "Truck", (o) -> getTruckPublisher(sender, o),
             "Motorcycle", (o) -> getMotorcyclePublisher(sender, o));
         receiver
-            .consumeAutoAck(PO_QUEUE_NAME)
+            .consumeAutoAck(QUEUE_TOPIC_PO)
             .doFinally((s) -> {
                 ContextLogging.log("Purchace Order Consumer in finally for signal " + s);
                 receiver.close();
@@ -162,7 +182,7 @@ public class PurchaseOrderConsumer {
             .doOnDiscard(String.class, 
                     s -> ContextLogging.log("Discarded invalid Car"))
             .map(s -> new OutboundMessage("", 
-                    CAR_QUEUE_NAME, 
+                    QUEUE_TOPIC_CAR, 
                     s.getBytes())));
     }
     
@@ -188,7 +208,7 @@ public class PurchaseOrderConsumer {
             .doOnDiscard(String.class, 
                     s -> ContextLogging.log("Discarded invalid Motorcycle"))
             .map(s -> new OutboundMessage("", 
-                    MOTORCYCLE_QUEUE_NAME, 
+                    QUEUE_TOPIC_MOTORCYCLE, 
                     s.getBytes())));
     }
     
@@ -214,7 +234,7 @@ public class PurchaseOrderConsumer {
             .doOnDiscard(String.class, 
                     s -> ContextLogging.log("Discarded invalid Truck"))
             .map(s -> new OutboundMessage("", 
-                    TRUCK_QUEUE_NAME, 
+                    QUEUE_TOPIC_TRUCK, 
                     s.getBytes())));
     }
     

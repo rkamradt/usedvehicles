@@ -29,8 +29,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.rabbitmq.client.ConnectionFactory;
 import io.github.rkamradt.possibly.PossiblyFunction;
-import java.time.Duration;
 import net.kamradtfamily.usedvehicles.commonobjects.ContextLogging;
+import net.kamradtfamily.usedvehicles.commonobjects.DefaultEnvironmentProperties;
+import net.kamradtfamily.usedvehicles.commonobjects.EnvironmentProperties;
 import net.kamradtfamily.usedvehicles.commonobjects.Vehicle;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -48,29 +49,48 @@ import reactor.util.function.Tuples;
  * @author randalkamradt
  */
 public class CarConsumer {
-    private static final String CAR_QUEUE_NAME = "car-queue";
-    private static final String HOST_NAME = "localhost";
-    private static final int PORT = 5672;
-    private static final String USER_NAME = "guest";
-    private static final String PASSWORD = "guest";
+    private static final EnvironmentProperties env = new DefaultEnvironmentProperties();
+    private static final String DATABASE_USER_NAME = 
+            env.getEnvironmentProperties("database.user.name").orElseThrow();
+    private static final String DATABASE_HOST_NAME = 
+            env.getEnvironmentProperties("database.host.name").orElseThrow();
+    private static final String DATABASE_PASSWORD  = 
+            env.getEnvironmentProperties("database.password").orElseThrow();
+    private static final String DATABASE_BUCKET_NAME_PO = 
+            env.getEnvironmentProperties("database.bucket.name.po").orElseThrow();
+    private static final String DATABASE_BUCKET_NAME_CAR  = 
+            env.getEnvironmentProperties("database.bucket.name.car").orElseThrow();
+    private static final String QUEUE_HOST_NAME  = 
+            env.getEnvironmentProperties("queue.host.name").orElseThrow();
+    private static final String QUEUE_PORT = 
+            env.getEnvironmentProperties("queue.port").orElseThrow();
+    private static final String QUEUE_USER_NAME = 
+            env.getEnvironmentProperties("queue.user.name").orElseThrow();
+    private static final String QUEUE_PASSWORD = 
+            env.getEnvironmentProperties("queue.password").orElseThrow();
+    private static final String QUEUE_TOPIC_CAR = 
+            env.getEnvironmentProperties("queue.topic.car").orElseThrow();
+    
     private static final ObjectMapper objectMapper = new ObjectMapper();
     static final ObjectReader carReader = objectMapper.readerFor(Payload.class);
-    static final Cluster cluster = Cluster.connect("127.0.0.1", "admin", "admin123");
+    static final Cluster cluster = Cluster.connect(DATABASE_HOST_NAME, 
+            DATABASE_USER_NAME, 
+            DATABASE_PASSWORD);
     static final ReactiveCollection poReactiveCollection = 
-            cluster.bucket("po")
+            cluster.bucket(DATABASE_BUCKET_NAME_PO)
             .defaultCollection()
             .reactive();
     static final ReactiveCollection carReactiveCollection = 
-            cluster.bucket("car")
+            cluster.bucket(DATABASE_BUCKET_NAME_CAR)
             .defaultCollection()
             .reactive();
     
     public static void consume() {
         ConnectionFactory cfactory = new ConnectionFactory();
-        cfactory.setHost(HOST_NAME);
-        cfactory.setPort(PORT);
-        cfactory.setUsername(USER_NAME);
-        cfactory.setPassword(PASSWORD);
+        cfactory.setHost(QUEUE_HOST_NAME);
+        cfactory.setPort(Integer.valueOf(QUEUE_PORT));
+        cfactory.setUsername(QUEUE_USER_NAME);
+        cfactory.setPassword(QUEUE_PASSWORD);
         SenderOptions soptions = new SenderOptions()
                 .connectionFactory(cfactory);
         Sender sender = RabbitFlux.createSender(soptions);
@@ -78,7 +98,7 @@ public class CarConsumer {
                 .connectionFactory(cfactory);
         Receiver carReceiver = RabbitFlux.createReceiver(roptions);
         carReceiver
-            .consumeAutoAck(CAR_QUEUE_NAME)
+            .consumeAutoAck(QUEUE_TOPIC_CAR)
             .onErrorStop()
             .doFinally((s) -> {
                 ContextLogging.log("Car consumer in finally for signal " + s);
