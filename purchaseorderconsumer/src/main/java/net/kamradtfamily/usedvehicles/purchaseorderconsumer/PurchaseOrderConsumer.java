@@ -62,11 +62,11 @@ public class PurchaseOrderConsumer {
     private static final String TRUCK_QUEUE_NAME = "truck-queue";
     private static final String MOTORCYCLE_QUEUE_NAME = "motorcycle-queue";
 
-    private static final String HOST_NAME = "localhost";
+    private static final String HOST_NAME = "rabbit";
     private static final int PORT = 5672;
     private static final String USER_NAME = "guest";
     private static final String PASSWORD = "guest";
-    private static final Cluster cluster = Cluster.connect("127.0.0.1", "admin", "admin123");
+    private static final Cluster cluster = Cluster.connect("192.168.0.174", "admin", "admin123");
     private static final Bucket bucket = cluster.bucket("po");
     private static final Collection collection = bucket.defaultCollection();
     private static final ReactiveCollection reactiveCollection = collection.reactive();
