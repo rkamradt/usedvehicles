@@ -1,0 +1,47 @@
+version: '3'
+services:
+  couchbase:
+    image: couchbase
+    restart: always
+    ports:
+      - 11210:11210
+      - 8091-8094:8091-8094
+  myrabbit:
+    image: rabbitmq:3-management
+    restart: always
+    ports:
+      - 5672:5672
+      - 8080:15672
+  purchase-order-consumer:
+    image: rlkamradt/purchaseorderconsumer:1.0-SNAPSHOT
+    environment:
+      DATABASE_HOST_NAME: couchbase
+      QUEUE_HOST_NAME: myrabbit
+    depends_on:
+      - "couchbase"
+      - "myrabbit"
+  car-consumer:
+    image: rlkamradt/carconsumer:1.0-SNAPSHOT
+    environment:
+      DATABASE_HOST_NAME: couchbase
+      QUEUE_HOST_NAME: myrabbit
+    depends_on:
+      - "couchbase"
+      - "myrabbit"
+  truck-consumer:
+    image: rlkamradt/truckconsumer:1.0-SNAPSHOT
+    environment:
+      DATABASE_HOST_NAME: couchbase
+      QUEUE_HOST_NAME: myrabbit
+    depends_on:
+      - "couchbase"
+      - "myrabbit"
+  motorcycle-consumer:
+    image: rlkamradt/motorcycleconsumer:1.0-SNAPSHOT
+    environment:
+      DATABASE_HOST_NAME: couchbase
+      QUEUE_HOST_NAME: myrabbit
+    depends_on:
+      - "couchbase"
+      - "myrabbit"
+   

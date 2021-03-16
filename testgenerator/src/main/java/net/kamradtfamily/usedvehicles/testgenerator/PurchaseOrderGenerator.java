@@ -51,7 +51,7 @@ import reactor.util.function.Tuples;
  */
 public class PurchaseOrderGenerator {
     private static final EnvironmentProperties env = new DefaultEnvironmentProperties();
-     private static final String QUEUE_HOST_NAME  = 
+    private static final String QUEUE_HOST_NAME  = 
             env.getEnvironmentProperties("queue.host.name").orElseThrow();
     private static final String QUEUE_PORT = 
             env.getEnvironmentProperties("queue.port").orElseThrow();

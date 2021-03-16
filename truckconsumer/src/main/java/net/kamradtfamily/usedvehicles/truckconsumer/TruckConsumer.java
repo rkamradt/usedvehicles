@@ -66,6 +66,7 @@ public class TruckConsumer {
             env.getEnvironmentProperties("queue.password").orElseThrow();
     private static final String QUEUE_TOPIC_TRUCK = 
             env.getEnvironmentProperties("queue.topic.truck").orElseThrow();
+    
     private static final ObjectMapper objectMapper = new ObjectMapper();
     static final ObjectReader truckReader = objectMapper.readerFor(Payload.class);
     static final Cluster cluster = Cluster.connect(DATABASE_HOST_NAME, 
