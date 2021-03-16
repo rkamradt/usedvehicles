@@ -47,13 +47,16 @@ public class DefaultEnvironmentPropertiesTest {
         System.out.println("getEnvironmentProperties");
         DefaultEnvironmentProperties instance = new DefaultEnvironmentProperties();
         assertTrue(instance.getEnvironmentProperties("key0").isEmpty());
-        assertEquals("value1", instance.getEnvironmentProperties("key1").get());
-        assertEquals("someothervalue value1", instance.getEnvironmentProperties("key2").get());
-        assertEquals("yetanothervalue someothervalue value1", instance.getEnvironmentProperties("key3").get());
-        assertEquals("no replacement $", instance.getEnvironmentProperties("key4").get());
-        File javaHome = new File(instance.getEnvironmentProperties("java.home").get());
-        String javaHomeString = javaHome.getAbsolutePath();
-        assertEquals("something something " + javaHomeString, instance.getEnvironmentProperties("key5").get());
+        assertEquals("value1", 
+                instance.getEnvironmentProperties("key1").get());
+        assertEquals("someothervalue value1", 
+                instance.getEnvironmentProperties("key2").get());
+        assertEquals("yetanothervalue someothervalue value1", 
+                instance.getEnvironmentProperties("key3").get());
+        assertEquals("no replacement $", 
+                instance.getEnvironmentProperties("key4").get());
+        assertEquals("something something " + instance.getEnvironmentProperties("java.home").get(),
+                instance.getEnvironmentProperties("key5").get());
     }
     
 }
