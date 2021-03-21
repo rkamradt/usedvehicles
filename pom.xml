@@ -8,7 +8,8 @@
     <name>Used Vehicle Intake</name>
     <description>A small system of services for intaking used vehicles</description>
     <modules>
-        <module>carconsumer</module>
+        <module>vehicleservice</module>
+	<module>carconsumer</module>
         <module>commonobjects</module>
         <module>motorcycleconsumer</module>
         <module>purchaseorderconsumer</module>
@@ -67,6 +68,11 @@
                 <groupId>io.projectreactor.rabbitmq</groupId>
                 <artifactId>reactor-rabbitmq</artifactId>
                 <version>1.5.1</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.Simonwep</groupId>
+                <artifactId>java-express</artifactId>
+                <version>0.0.10</version>
             </dependency>
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>

@@ -6,10 +6,9 @@
         <artifactId>usedvehicles</artifactId>
         <version>1.0-SNAPSHOT</version>
     </parent>
-    <artifactId>carconsumer</artifactId>
-    <name>Car Consumer</name>
+    <artifactId>vehicleservice</artifactId>
+    <name>Vehicle Service</name>
     <packaging>jar</packaging>
-   
     <dependencies>
         <dependency>
             <groupId>net.kamradtfamily</groupId>
@@ -23,6 +22,10 @@
         <dependency>
             <groupId>io.projectreactor.rabbitmq</groupId>
             <artifactId>reactor-rabbitmq</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.github.Simonwep</groupId>
+            <artifactId>java-express</artifactId>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
