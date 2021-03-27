@@ -38,6 +38,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class PurchaseOrderPayload {
+    String id;
     BigDecimal price;
     String type;
 }

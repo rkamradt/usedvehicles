@@ -39,11 +39,14 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
+
 import io.github.rkamradt.possibly.PossiblyFunction;
 import net.kamradtfamily.usedvehicles.commonobjects.ContextLogging;
 import net.kamradtfamily.usedvehicles.commonobjects.DefaultEnvironmentProperties;
 import net.kamradtfamily.usedvehicles.commonobjects.EnvironmentProperties;
 import net.kamradtfamily.usedvehicles.commonobjects.PurchaseOrder;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.rabbitmq.*;
 import reactor.util.function.Tuple2;
@@ -128,17 +131,39 @@ public class VehicleService {
             try {
                 String id = req.getParam("poId");
                 Tuple2<Status, String> payload = getPayloadById(id)
-                    .map(PossiblyFunction.of(po -> objectMapper.writeValueAsString(po)))
-                    .map(p -> {
-                        if(p.exceptional()) {
-                            return Tuples.of(Status._500, "Uncaught exception " + p.getException().get());
-                        }
-                        return Tuples.of(Status._200, p.getValue().get());
-                    })
-                    .defaultIfEmpty(Tuples.of(Status._404, id + " not found"))
-                    .block(Duration.ofSeconds(10));
+                        .map(PossiblyFunction.of(po -> objectMapper.writeValueAsString(po)))
+                        .map(p -> {
+                            if(p.exceptional()) {
+                                return Tuples.of(Status._500, "Uncaught exception " + p.getException().get());
+                            }
+                            return Tuples.of(Status._200, p.getValue().get());
+                        })
+                        .defaultIfEmpty(Tuples.of(Status._404, id + " not found"))
+                        .block(Duration.ofSeconds(10));
                 res.setStatus(payload.getT1());
                 res.send(payload.getT2());
+            } catch (Exception ex) {
+                ContextLogging.log("uncaught exception " + ex.getMessage());
+                ex.printStackTrace(System.out);
+                res.sendStatus(Status._500);
+            }
+        });
+        app.get("/po", (req, res) -> {
+            try {
+                List<String> payloads = getAllPayloads()
+                        .map(PossiblyFunction.of(po -> objectMapper.writeValueAsString(po)))
+                        .map(p -> {
+                            if(p.exceptional()) {
+                                throw new RuntimeException("could not serialize object");
+                            }
+                            return p.getValue().get();
+                        })
+                        .collectList()
+                        .block(Duration.ofSeconds(10));
+                res.setStatus(Status._200);
+                res.send("[" + payloads
+                        .stream()
+                        .collect(Collectors.joining(","))+ "]");
             } catch (Exception ex) {
                 ContextLogging.log("uncaught exception " + ex.getMessage());
                 ex.printStackTrace(System.out);
@@ -191,7 +216,7 @@ public class VehicleService {
     }
 
     public static Mono<PurchaseOrderPayload>
-                getPayloadById(final String id) {
+    getPayloadById(final String id) {
         final ContextLogging context = ContextLogging.builder()
                 .serviceName("VehicleService")
                 .eventId(UUID.randomUUID().toString())
@@ -205,12 +230,44 @@ public class VehicleService {
                 .map(r -> r.contentAs(String.class))
                 .map(PossiblyFunction.of(ps -> objectMapper.readValue(ps, Payload.class)))
                 .map(p -> p.map(po -> PurchaseOrderPayload.builder()
+                        .id(po.po.getId())
                         .price(po.po.getPrice())
                         .type(po.po.getType())
                         .build()))
                 .map(p -> p.getValue())
                 .onErrorReturn(DocumentNotFoundException.class, Optional.empty())
                 .flatMap(p -> p.isEmpty() ? Mono.empty() : Mono.just(p.get()));
+    }
+
+    public static Flux<PurchaseOrderPayload>
+    getAllPayloads() {
+        final ContextLogging context = ContextLogging.builder()
+                .serviceName("VehicleService")
+                .eventId(UUID.randomUUID().toString())
+                .build();
+        ContextLogging.log(context, "retrieving all purchase orders");
+        return cluster.reactive()
+                .query("select * from `po`")
+                .doOnError(e -> ContextLogging.log(context,
+                        "error finding purchase orders " + e))
+                .flatMapMany(r -> r.rowsAs(CouchbasePayload.class))
+                .doOnNext(r -> ContextLogging.log(context, "found item " + r))
+                .map(PossiblyFunction.of(ps -> objectMapper.readValue(ps.po, Payload.class)))
+                .map(p -> p.map(po -> PurchaseOrderPayload.builder()
+                        .id(po.po.getId())
+                        .price(po.po.getPrice())
+                        .type(po.po.getType())
+                        .build()))
+                .map(p -> p.getValue().get());
+
+    }
+
+    public static class CouchbasePayload {
+        public CouchbasePayload() {} // need for Couchbase serialization
+        public CouchbasePayload(String po) {
+            this.po = po;
+        }
+        public String po;
     }
 
     public static class Payload {
